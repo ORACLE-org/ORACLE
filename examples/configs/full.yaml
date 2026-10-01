@@ -1,0 +1,63 @@
+# Router + DISC in front of two vLLM backends (one model per GPU).
+models:
+  - name: qwen3.6-27b
+    url: http://localhost:8001/v1
+    served_name: Qwen/Qwen3.6-27B-FP8
+    price_in: 0.30        # $ per 1M prompt tokens (for the cost term and the dashboard)
+    price_out: 0.90
+    capacity: vllm        # read KV capacity from /metrics (also: sglang | static + capacity_tokens)
+  - name: qwen3.5-9b
+    url: http://localhost:8002/v1
+    served_name: Qwen/Qwen3.5-9B
+    price_in: 0.10
+    price_out: 0.30
+    capacity: vllm
+
+router:
+  selector: linucb        # ucb | lints | epsilon_greedy | acrouter | routellm | fixed | random | <your plugin>
+  selector_kwargs:
+    alpha_ucb: 1.0
+  features: hashing       # hashing | embedding | task_type | hashing+task_type
+  feature_dim: 64
+  reward_alpha: 0.0       # Eq. 3: 0 = accuracy only; >0 trades accuracy for cost
+  reward_cost_ref: 1.0    # cost that counts as "1" in the reward
+
+verification:
+  embedder: hashing       # st:BAAI/bge-m3 for the paper's embedder (pip install sentence-transformers)
+  verifiers:
+    - name: patch_tests
+      type: command
+      options: {command: "docker exec {container} bash -lc 'cd /repo && pytest -q'", timeout_s: 1800}
+      task_type: swe
+      exemplars:
+        - "Fix the failing test in src/parser.py so the suite passes."
+        - "Implement the function described in issue #42 and make the tests green."
+        - "The CLI crashes on empty input; patch it."
+    - name: state_check
+      type: http
+      options: {url: http://localhost:7000/verify}
+      task_type: tau2
+      exemplars:
+        - "Book a flight from SFO to JFK next Tuesday and add a checked bag."
+        - "Change my hotel reservation to a later check-in."
+        - "Cancel order 1234 and refund the customer."
+    - name: container_tests
+      type: command
+      options: {command: "harbor verify {task_dir}"}
+      task_type: terminal
+      exemplars:
+        - "In the container, compile the project and run its benchmark."
+        - "Set up a cron job that rotates the logs."
+
+scheduler:
+  enabled: true
+  beta: 0.5               # Eq. 4 accuracy/wait trade-off; 0 = admission only, 1 = least wait
+  w0: 60                  # reference wait (s)
+  rho: 0.85               # fraction of KV capacity the ledger may commit
+  peak_prior: 20000       # expected peak context before any program finished (tokens)
+  prior_weight: 5
+  poll_s: 2.0
+
+server:
+  port: 8300
+  ui: true

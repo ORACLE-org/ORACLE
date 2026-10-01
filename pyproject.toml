@@ -1,0 +1,39 @@
+[build-system]
+requires = ["setuptools>=64", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "oracle-router"
+version = "0.1.0"
+description = "ORACLE: concurrency-aware routing and scheduling for agentic LLM programs"
+readme = "README.md"
+license = { file = "LICENSE" }
+requires-python = ">=3.10"
+dependencies = [
+    "numpy>=1.23",
+    "pyyaml>=6",
+]
+
+[project.optional-dependencies]
+server = ["fastapi>=0.100", "uvicorn>=0.23", "httpx>=0.24"]
+embeddings = ["sentence-transformers>=2.2"]
+routellm = ["routellm"]
+litellm = ["litellm"]
+dev = ["pytest>=7", "pytest-asyncio>=0.21", "fastapi>=0.100", "uvicorn>=0.23", "httpx>=0.24"]
+all = ["fastapi>=0.100", "uvicorn>=0.23", "httpx>=0.24", "sentence-transformers>=2.2"]
+
+[project.scripts]
+oracle = "oracle.__main__:main"
+
+[project.urls]
+Homepage = "https://github.com/ORACLE-org/ORACLE"
+
+[tool.setuptools.packages.find]
+include = ["oracle*"]
+
+[tool.setuptools.package-data]
+oracle = ["server/ui/*.html"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]

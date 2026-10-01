@@ -1,0 +1,18 @@
+# Swap the router backend: ACRouter's memory + orchestrator loop instead of the bandit.
+models:
+  - {name: strong, url: http://localhost:8001/v1, capacity_tokens: 200000}
+  - {name: weak,   url: http://localhost:8002/v1, capacity_tokens: 200000}
+
+router:
+  selector: acrouter
+  selector_kwargs:
+    k: 10
+    min_sim: 0.5
+    orchestrator_url: http://localhost:8003/v1     # omit to use the memory rule without an LLM
+    orchestrator_model: Qwen/Qwen3.5-4B
+
+verification:
+  embedder: st:BAAI/bge-m3
+  verifiers:
+    - {name: swe,  type: reported, exemplars: ["fix the failing test", "patch the bug in the module"]}
+    - {name: tau2, type: reported, exemplars: ["book a flight for the user", "change the hotel reservation"]}

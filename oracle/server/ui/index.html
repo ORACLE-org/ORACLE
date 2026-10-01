@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ORACLE dashboard</title>
+<style>
+:root{--bg:#f6f7f9;--card:#fff;--ink:#1b1f24;--mut:#6b7280;--rule:#e5e7eb;--rb:#2f5bea;--am:#d97706;--gn:#15803d;--rd:#b91c1c}
+@media (prefers-color-scheme:dark){:root{--bg:#0f1115;--card:#171a21;--ink:#e6e8ec;--mut:#9aa3b2;--rule:#2a2f3a;--rb:#7b9cff;--am:#f0a641;--gn:#4ade80;--rd:#f87171}}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--ink);font:14px/1.45 ui-sans-serif,system-ui,-apple-system,Segoe UI,Roboto,sans-serif}
+header{display:flex;align-items:baseline;gap:16px;padding:14px 20px;border-bottom:1px solid var(--rule);background:var(--card)}
+header h1{font-size:18px;margin:0;letter-spacing:.02em}header span{color:var(--mut)}header .r{margin-left:auto;color:var(--mut);font-size:12px}
+main{padding:16px 20px;display:grid;gap:16px;max-width:1400px;margin:0 auto}
+.tiles{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px}
+.tile{background:var(--card);border:1px solid var(--rule);border-radius:8px;padding:12px 14px}
+.tile .k{color:var(--mut);font-size:12px;text-transform:uppercase;letter-spacing:.06em}.tile .v{font-size:26px;font-weight:600;font-variant-numeric:tabular-nums}
+.grid{display:grid;grid-template-columns:1fr 1fr;gap:16px}@media(max-width:900px){.grid{grid-template-columns:1fr}}
+section{background:var(--card);border:1px solid var(--rule);border-radius:8px;padding:14px 16px}
+section h2{font-size:13px;margin:0 0 10px;color:var(--mut);text-transform:uppercase;letter-spacing:.06em}
+table{width:100%;border-collapse:collapse;font-variant-numeric:tabular-nums}th,td{text-align:left;padding:5px 6px;border-bottom:1px solid var(--rule);white-space:nowrap}th{color:var(--mut);font-weight:500;font-size:12px}
+.bar{height:10px;background:var(--rule);border-radius:5px;overflow:hidden;min-width:120px}.bar i{display:block;height:100%;background:var(--am)}
+.tag{display:inline-block;padding:1px 7px;border-radius:10px;font-size:11px;border:1px solid var(--rule);color:var(--mut)}.ok{color:var(--gn)}.bad{color:var(--rd)}.div{color:var(--am)}
+.wrap{overflow-x:auto}.mono{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:12px}
+</style>
+</head>
+<body>
+<header><h1>ORACLE</h1><span id="sub">router + DISC</span><span class="r" id="ts">connecting…</span></header>
+<main>
+  <div class="tiles" id="tiles"></div>
+  <div class="grid">
+    <section><h2>Models</h2><div class="wrap"><table id="models"></table></div></section>
+    <section><h2>Backends (DISC ledgers)</h2><div class="wrap"><table id="backends"></table></div></section>
+  </div>
+  <section><h2>Active programs</h2><div class="wrap"><table id="programs"></table></div></section>
+  <section><h2>Recent feedback</h2><div class="wrap"><table id="feedback"></table></div></section>
+  <section><h2>Selector state</h2><pre class="mono" id="selector"></pre></section>
+</main>
+<script>
+const $=s=>document.querySelector(s);
+const fmt=(x,d=2)=>x==null?'–':(typeof x==='number'?x.toFixed(d):x);
+function tile(k,v){return `<div class="tile"><div class="k">${k}</div><div class="v">${v}</div></div>`}
+function rows(id,head,body){$(id).innerHTML='<tr>'+head.map(h=>`<th>${h}</th>`).join('')+'</tr>'+body.join('')}
+async function tick(){
+  let s;try{s=await (await fetch('/state')).json()}catch(e){$('#ts').textContent='server unreachable';return}
+  const r=s.router,sc=s.scheduler,fb=r.feedback;
+  $('#sub').textContent=(r.selector.name||'router')+(sc?' + DISC':' (router only)');
+  $('#ts').textContent='updated '+new Date(s.t*1000).toLocaleTimeString();
+  const acc=fb.recent_accuracy||{};
+  $('#tiles').innerHTML=tile('active programs',r.active)+tile('verified',fb.completed)+tile('verifying',fb.pending)+tile('failed verifications',fb.failed)+(sc?tile('dispatched',sc.dispatched)+tile('diverted',sc.diverted):'');
+  const pulls=(r.selector.pulls)||{};
+  rows('#models',['model','active','selected','recent accuracy'],r.models.map(m=>`<tr><td>${m}</td><td>${r.active_per_model[m]||0}</td><td>${pulls[m]??'–'}</td><td>${acc[m]!=null?(acc[m]*100).toFixed(1)+'%':'–'}</td></tr>`));
+  if(sc){rows('#backends',['backend','admitted','queued','pending','reserved / budget','free slots','ĉ (tokens)','d̂ (s)','wait forecast','measured KV'],Object.entries(sc.backends).map(([n,b])=>{const l=b.ledger,p=l.budget_tokens?Math.min(100,100*l.reserved_tokens/l.budget_tokens):0;return `<tr><td>${n}</td><td>${l.admitted}</td><td>${b.queued}</td><td>${b.pending}</td><td><div class="bar"><i style="width:${p}%"></i></div><span class="tag">${l.reserved_tokens.toLocaleString()} / ${l.budget_tokens.toLocaleString()}</span></td><td>${l.free_slots}</td><td>${fmt(l.c_hat,0)}</td><td>${fmt(l.d_hat,1)}</td><td>${fmt(b.wait_forecast_s,1)} s</td><td>${l.measured_usage==null?'–':(l.measured_usage*100).toFixed(0)+'%'}</td></tr>`}))}
+  else rows('#backends',['scheduler disabled'],[]);
+  rows('#programs',['program','model','task type','verifier','wait (s)','requests','tokens in / out','cost','age (s)'],r.programs.map(p=>`<tr><td class="mono">${p.program_id}</td><td>${p.model}${p.diverted?' <span class="tag div">diverted from '+p.proposed_model+'</span>':''}</td><td>${p.task_type??'–'}</td><td>${p.verifier??'–'}</td><td>${fmt(p.admission_wait_s,1)}</td><td>${p.requests}</td><td>${p.prompt_tokens.toLocaleString()} / ${p.completion_tokens.toLocaleString()}</td><td>$${fmt(p.cost,4)}</td><td>${(s.t-p.created_at).toFixed(0)}</td></tr>`));
+  rows('#feedback',['program','model','task type','score','cost','reward','verify (s)'],[...fb.recent].reverse().map(h=>`<tr><td class="mono">${h.program_id}</td><td>${h.model}</td><td>${h.task_type??'–'}</td><td class="${h.score>=0.5?'ok':'bad'}">${fmt(h.score,2)}</td><td>$${fmt(h.cost,4)}</td><td>${fmt(h.reward,3)}</td><td>${fmt(h.verify_s,2)}</td></tr>`));
+  $('#selector').textContent=JSON.stringify(r.selector,null,1);
+}
+tick();setInterval(tick,2000);
+</script>
+</body>
+</html>

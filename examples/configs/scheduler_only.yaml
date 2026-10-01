@@ -1,0 +1,15 @@
+# DISC only: admission control in front of one SGLang backend; every program goes to it.
+models:
+  - name: local
+    url: http://localhost:30000/v1
+    served_name: Qwen/Qwen3.6-27B-FP8
+    capacity: sglang
+
+router:
+  selector: fixed
+
+scheduler:
+  enabled: true
+  beta: 0            # single backend: nothing to divert to
+  rho: 0.85
+  peak_prior: 30000

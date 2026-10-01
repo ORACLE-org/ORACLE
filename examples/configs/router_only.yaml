@@ -1,0 +1,28 @@
+# Routing only (no admission control): e.g. hosted APIs where you do not own the KV cache.
+models:
+  - name: strong
+    url: https://api.example.com/v1
+    served_name: big-model
+    api_key: ${API_KEY}
+    price_in: 3.0
+    price_out: 15.0
+  - name: weak
+    url: https://api.example.com/v1
+    served_name: small-model
+    api_key: ${API_KEY}
+    price_in: 0.15
+    price_out: 0.6
+
+router:
+  selector: linucb
+  reward_alpha: 0.2
+  reward_cost_ref: 0.5
+
+verification:
+  metadata_key: task_type     # the harness passes program_metadata: {task_type: swe|tau2}
+  verifiers:
+    - {name: swe, type: reported}
+    - {name: tau2, type: reported}
+
+scheduler:
+  enabled: false
