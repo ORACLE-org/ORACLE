@@ -12,15 +12,18 @@ Typical use::
     b = router.bind("task-17", prompt=first_user_message)   # -> b.model, b.verifier
     ... run the agent on b.model ...
     router.complete("task-17", ProgramOutcome(program_id="task-17", cost=0.12, payload={...}))
+
+``verifiers`` takes :class:`~oracle.verification.Verifier` instances or plain
+``fn(outcome) -> score`` callables (wrapped in a ``CallableVerifier``).
 """
 from __future__ import annotations
 
 import asyncio
 import time
-from typing import Any, Dict, Optional, Sequence, Union
+from typing import Any, Callable, Dict, Mapping, Optional, Sequence, Union
 
 from ..types import Binding, ProgramOutcome, RoutingContext
-from ..verification.base import Verifier
+from ..verification.base import CallableVerifier, Verifier
 from ..verification.feedback import FeedbackLoop
 from ..verification.selector import FixedVerifierSelector, VerifierSelector
 from .base import ModelSelector
@@ -29,19 +32,35 @@ from .registry import make_selector
 from .reward import Reward
 
 
+def _as_verifiers(verifiers: Optional[Mapping[str, Union[Verifier, Callable[[ProgramOutcome], Any]]]]) -> Dict[str, Verifier]:
+    out: Dict[str, Verifier] = {}
+    for name, v in (verifiers or {}).items():
+        if isinstance(v, Verifier):
+            out[name] = v
+        elif callable(v):
+            out[name] = CallableVerifier(name, v)
+        else:
+            raise TypeError(f"verifier {name!r} must be a Verifier or a callable, got {type(v).__name__}")
+    return out
+
+
 class Router:
     def __init__(
         self,
         models: Sequence[str],
         selector: Union[str, ModelSelector] = "linucb",
         selector_kwargs: Optional[Dict[str, Any]] = None,
-        verifiers: Optional[Dict[str, Verifier]] = None,
+        verifiers: Optional[Mapping[str, Union[Verifier, Callable[[ProgramOutcome], Any]]]] = None,
         verifier_selector: Optional[VerifierSelector] = None,
         features: Optional[FeatureExtractor] = None,
         reward: Optional[Reward] = None,
         max_verify_concurrency: int = 8,
     ) -> None:
         self.models = list(models)
+        if not self.models:
+            raise ValueError("Router needs at least one model")
+        if len(set(self.models)) != len(self.models):
+            raise ValueError(f"duplicate model names: {self.models}")
         self.features = features if features is not None else HashingFeatures(dim=64)
         if isinstance(selector, str):
             kw = dict(selector_kwargs or {})
@@ -49,7 +68,7 @@ class Router:
                 kw.setdefault("dim", self.features.dim)
             selector = make_selector(selector, self.models, **kw)
         self.selector: ModelSelector = selector
-        self.verifiers = dict(verifiers or {})
+        self.verifiers = _as_verifiers(verifiers)
         if verifier_selector is None:
             verifier_selector = FixedVerifierSelector(next(iter(self.verifiers)) if self.verifiers else "reported")
         self.verifier_selector = verifier_selector
@@ -70,9 +89,18 @@ class Router:
         ctx.features = self.features(prompt, ctx.metadata)
         return ctx
 
+    def _known(self, model: Any, who: str) -> str:
+        if model not in self.models:
+            raise ValueError(f"{who} chose {model!r}, which is not one of the router's models {self.models}")
+        return model
+
     def propose(self, ctx: RoutingContext) -> str:
         """Ask the model selector for a model without recording a binding."""
-        return self.selector.select(ctx)
+        return self._known(self.selector.select(ctx), f"selector {self.selector.name!r}")
+
+    async def apropose(self, ctx: RoutingContext) -> str:
+        """Async :meth:`propose`: lets selectors that do I/O (``aselect``) run without blocking the event loop."""
+        return self._known(await self.selector.aselect(ctx), f"selector {self.selector.name!r}")
 
     def bind(self, program_id: str, prompt: str = "", metadata: Optional[Dict[str, Any]] = None, model: Optional[str] = None) -> Binding:
         """Create the program's row (idempotent: a second call returns the existing row).
@@ -81,6 +109,8 @@ class Router:
         """
         if program_id in self.table:
             return self.table[program_id]
+        if model is not None:
+            self._known(model, "bind(model=...)")
         ctx = self.context(program_id, prompt, metadata)
         proposed = self.propose(ctx)
         b = Binding(program_id=program_id, model=model or proposed, verifier=ctx.metadata["verifier"], proposed_model=proposed, diverted=bool(model and model != proposed), context=ctx)
@@ -98,9 +128,14 @@ class Router:
     def complete(self, program_id: str, outcome: Optional[ProgramOutcome] = None, **fields) -> Optional["asyncio.Task[float]"]:
         """Mark a program finished, release its row and verify asynchronously.
 
-        Requires a running event loop (call from async code or use
-        :meth:`complete_sync`).  Returns the verification task.
+        Must be called from a running event loop (verification is scheduled as
+        a task); from synchronous code use :meth:`complete_sync`.  Returns the
+        verification task, or ``None`` for an unknown program.
         """
+        try:
+            asyncio.get_running_loop()
+        except RuntimeError:
+            raise RuntimeError("Router.complete() needs a running event loop: call it from async code, or use Router.complete_sync() from a plain script") from None
         b = self.table.pop(program_id, None)
         if b is None:
             return None

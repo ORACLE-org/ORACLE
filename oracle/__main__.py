@@ -77,8 +77,11 @@ def cmd_demo(args: argparse.Namespace) -> int:
     tasks = sim.make_tasks(args.programs, seed=args.seed)
 
     async def go():
-        for name in args.selectors.split(","):
-            router = Router(models, name, verifiers=verifiers, verifier_selector=PrototypeVerifierSelector(sim.exemplars()))
+        for name in [n.strip() for n in args.selectors.split(",") if n.strip()]:
+            try:
+                router = Router(models, name, verifiers=verifiers, verifier_selector=PrototypeVerifierSelector(sim.exemplars()))
+            except (KeyError, ImportError, ValueError) as e:  # unknown selector, missing optional dependency, bad kwargs
+                raise SystemExit(f"demo: cannot build selector {name!r}: {e.args[0] if e.args else e}")
             system = router if args.no_scheduler else Oracle(router, DISC({m: args.capacity_tokens for m in models}, policy=DispatchPolicy(beta=args.beta, w0=args.w0)))
             r = await sim.run(system, tasks, concurrency=args.concurrency, seed=args.seed, time_scale=args.time_scale)
             print(f"{name:>15}: {r.summary()}")
@@ -124,8 +127,8 @@ def main(argv=None) -> int:
     d.add_argument("--seed", type=int, default=0)
     d.set_defaults(fn=cmd_demo)
 
-    l = sub.add_parser("selectors", help="list available router backends")
-    l.set_defaults(fn=cmd_selectors)
+    ls = sub.add_parser("selectors", help="list available router backends")
+    ls.set_defaults(fn=cmd_selectors)
 
     args = p.parse_args(argv)
     return args.fn(args)

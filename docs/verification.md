@@ -19,7 +19,10 @@ from oracle.verification import (ReportedVerifier, CallableVerifier, CommandVeri
 | `LLMJudgeVerifier(name, url, model)` | `llm_judge` | an OpenAI-compatible judge; `payload.task`, `payload.answer`, optional `payload.reference` |
 
 `ProgramOutcome` carries `program_id`, `cost`, optional `success`, and a free-form `payload` (the
-command template and HTTP verifier see it: `"docker exec {container} pytest -q"`).
+command template and HTTP verifier see it: `"docker exec {container} pytest -q"`). Payload values
+usually come from the client that reported the outcome, so `CommandVerifier` shell-quotes each one
+before substituting it (`quote=False` turns that off for templates whose values you control).
+`Router(verifiers=...)` also accepts plain `fn(outcome) -> score` functions and wraps them.
 
 Subclass `Verifier` for anything else: one `async verify(outcome) -> float`.
 
@@ -51,6 +54,7 @@ context) and to features via `TaskTypeFeatures`.
 4. the result is appended to `feedback.history` (dashboard: "Recent feedback") and the optional
    `on_reward(binding, score, reward)` callback fires.
 
-A missing verifier name falls back to `outcome.success`; a failing verifier is logged, counted in
-`feedback.failed`, and does not update the selector. `await router.feedback.drain()` waits for
-everything in flight (tests, shutdown).
+A missing verifier name falls back to `outcome.success`; a verifier that raises or returns a
+NaN/inf score is logged, counted in `feedback.failed`, and does not update the selector (a NaN
+reward would corrupt a learner for good). `await router.feedback.drain()` waits for everything in
+flight (tests, shutdown).

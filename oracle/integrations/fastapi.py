@@ -20,7 +20,7 @@ from typing import Any, Callable, Dict, Optional
 
 from ..scheduling.admission import ClientGone
 from ..scheduling.disc import DISC
-from ..server.app import get_program_id
+from ..server.fields import get_program_id
 
 
 class DISCMiddleware:

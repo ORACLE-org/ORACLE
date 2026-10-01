@@ -9,6 +9,7 @@ class can sit inside any scheduler or a unit test.
 """
 from __future__ import annotations
 
+import math
 import time
 from collections import Counter
 from typing import Any, Callable, Dict, Optional
@@ -41,6 +42,10 @@ class ReservationLedger:
         max_programs: int = 0,
         clock: Callable[[], float] = time.time,
     ) -> None:
+        if not 0.0 < float(rho) <= 1.0:
+            raise ValueError("rho must be in (0, 1]")
+        if int(prior_weight) < 0 or float(peak_prior) < 0 or float(duration_prior_s) < 0:
+            raise ValueError("prior_weight, peak_prior and duration_prior_s must be non-negative")
         self.capacity_tokens = int(capacity_tokens)
         self.rho = float(rho)
         self.peak_prior, self.prior_weight = float(peak_prior), int(prior_weight)
@@ -59,12 +64,14 @@ class ReservationLedger:
     @property
     def c_hat(self) -> float:
         """Expected peak context of a program (tokens)."""
-        return (self.prior_weight * self.peak_prior + self.finished_peak_sum) / (self.prior_weight + self.finished_n)
+        n = self.prior_weight + self.finished_n
+        return (self.prior_weight * self.peak_prior + self.finished_peak_sum) / n if n > 0 else self.peak_prior
 
     @property
     def d_hat(self) -> float:
         """Expected run time of a program (seconds)."""
-        return (self.prior_weight * self.duration_prior_s + self.dur_sum) / (self.prior_weight + self.dur_n)
+        n = self.prior_weight + self.dur_n
+        return (self.prior_weight * self.duration_prior_s + self.dur_sum) / n if n > 0 else self.duration_prior_s
 
     @property
     def budget(self) -> float:
@@ -91,7 +98,7 @@ class ReservationLedger:
         if self.max_programs:
             return max(0, self.max_programs - len(self.admitted))
         if self.capacity_tokens <= 0:
-            return 1 if not self.admitted else 10 ** 6
+            return 10 ** 6  # capacity unknown: ``fits()`` never blocks, so the forecast wait is 0
         per = self.c_hat + self.overhead
         room = self.budget - self.reserved()
         k = int(room // per) if per > 0 else 0
@@ -109,25 +116,27 @@ class ReservationLedger:
             p["tokens"] = int(tokens)
             p["peak"] = max(p["peak"], int(tokens))
 
-    def release(self, program_id: str, peak_tokens: Optional[int] = None) -> bool:
-        """The program finished: free its reservation and learn from its peak and duration."""
+    def release(self, program_id: str, peak_tokens: Optional[int] = None, learn: bool = True) -> bool:
+        """The program finished: free its reservation and (unless ``learn=False``) learn from its peak and duration."""
         p = self.admitted.pop(program_id, None)
         if p is None:
             return False
+        self.stats["released"] += 1
+        if not learn:
+            return True
         peak = int(peak_tokens) if peak_tokens is not None else p["peak"]
         if peak > 0:
             self.finished_peak_sum += peak
             self.finished_n += 1
         self.dur_sum += self.clock() - p["t"]
         self.dur_n += 1
-        self.stats["released"] += 1
         return True
 
     def observe_usage(self, used_fraction: Optional[float], capacity_tokens: Optional[int] = None) -> None:
         """Feed a measurement from a :class:`CapacitySource`."""
         if capacity_tokens:
             self.capacity_tokens = int(capacity_tokens)
-        if used_fraction is not None:
+        if used_fraction is not None and math.isfinite(float(used_fraction)):
             self.measured_usage = float(used_fraction)
 
     # --- forecast -----------------------------------------------------------

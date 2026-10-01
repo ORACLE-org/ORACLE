@@ -15,11 +15,24 @@ from fastapi.responses import JSONResponse, StreamingResponse
 UsageCallback = Callable[[int, int], Awaitable[None]]  # (prompt_tokens, completion_tokens)
 
 
-def _usage(obj: Dict[str, Any]) -> Optional[Tuple[int, int]]:
-    u = obj.get("usage") or {}
-    if not u:
+def _usage(obj: Any) -> Optional[Tuple[int, int]]:
+    """``(prompt_tokens, completion_tokens)`` from a response object, ``None`` if it carries no usable usage block."""
+    if not isinstance(obj, dict):
         return None
-    return int(u.get("prompt_tokens") or 0), int(u.get("completion_tokens") or 0)
+    u = obj.get("usage")
+    if not isinstance(u, dict) or not u:
+        return None
+    try:
+        return int(u.get("prompt_tokens") or 0), int(u.get("completion_tokens") or 0)
+    except (TypeError, ValueError):
+        return None
+
+
+def _error_body(text: bytes) -> Any:
+    try:
+        return json.loads(text)
+    except ValueError:
+        return {"error": text.decode(errors="replace")}
 
 
 async def forward(client: httpx.AsyncClient, url: str, path: str, payload: Dict[str, Any], headers: Dict[str, str], on_usage: UsageCallback, on_done: Optional[Callable[[], Awaitable[None]]] = None):
@@ -57,7 +70,7 @@ async def forward(client: httpx.AsyncClient, url: str, path: str, payload: Dict[
         await resp.aclose()
         if on_done is not None:
             await on_done()
-        return JSONResponse(json.loads(text) if text.startswith(b"{") else {"error": text.decode(errors="replace")}, status_code=resp.status_code)
+        return JSONResponse(_error_body(text), status_code=resp.status_code)
 
     async def gen() -> AsyncIterator[bytes]:
         usage: Optional[Tuple[int, int]] = None
@@ -72,7 +85,7 @@ async def forward(client: httpx.AsyncClient, url: str, path: str, payload: Dict[
                     if line.startswith(b"data:") and line != b"data: [DONE]":
                         try:
                             u = _usage(json.loads(line[5:].strip()))
-                        except ValueError:
+                        except ValueError:  # not JSON (a comment, a partial line): keep streaming
                             u = None
                         if u:
                             usage = u

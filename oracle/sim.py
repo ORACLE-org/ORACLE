@@ -9,10 +9,9 @@ from __future__ import annotations
 import asyncio
 import random
 from dataclasses import dataclass, field
-from typing import Dict, List, Optional
+from typing import Dict, List
 
 from .core import Oracle
-from .routing.router import Router
 from .types import ProgramOutcome
 
 FAMILIES: Dict[str, Dict] = {

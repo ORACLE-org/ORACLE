@@ -14,7 +14,8 @@ R = <ID, P, M, V>        program ID  ->  (model m, verifier v, backend)
 ```
 
 `oracle.types.Binding` is that row. It is created once, reused by every later request of the
-program, and removed after the program's verifier has run.
+program, removed from the table when the program completes (its slot is freed before the verifier
+runs) and kept in `Router.finished` for the dashboard.
 
 ## Request flow (`oracle serve`, router + DISC)
 
@@ -84,3 +85,6 @@ oracle/
 * **Pure logic, thin I/O.** Ledger, gate and dispatch rule are plain Python objects with injectable
   clocks; HTTP and metrics parsing live in `server/` and `capacity.py`.
 * **Clients change one field.** `program_id`, plus an optional `program_done`.
+* **Bad input fails early and loudly.** Malformed requests get a 400 before anything is bound; a
+  verifier that raises or returns NaN is a failed verification and never reaches the selector;
+  config mistakes are a `ValueError` at load time.

@@ -5,6 +5,8 @@ from __future__ import annotations
 
 import asyncio
 import inspect
+import re
+import shlex
 from abc import ABC, abstractmethod
 from typing import Any, Awaitable, Callable, Dict, Optional, Union
 
@@ -56,20 +58,33 @@ class CommandVerifier(Verifier):
     """Run a shell command; exit code 0 means success.
 
     The command is a template with ``{program_id}`` and any ``outcome.payload``
-    keys, e.g. ``"docker exec {container} pytest -q"``.  Set ``parse_score`` to
-    read a float from the last line of stdout instead of using the exit code.
+    keys, e.g. ``"docker exec {container} pytest -q"``.  Payload values are
+    shell-quoted before substitution (``quote=True``) because they usually come
+    from the client that reported the outcome: a value always lands in the
+    command as one argument and cannot inject further shell syntax.  Pass
+    ``quote=False`` only for templates whose values you fully control.  Set
+    ``parse_score`` to read a float from the last line of stdout instead of
+    using the exit code.
     """
 
-    def __init__(self, name: str, command: str, timeout_s: float = 1800.0, parse_score: bool = False, cwd: Optional[str] = None) -> None:
-        self.name, self.command, self.timeout_s, self.parse_score, self.cwd = name, command, timeout_s, parse_score, cwd
+    def __init__(self, name: str, command: str, timeout_s: float = 1800.0, parse_score: bool = False, cwd: Optional[str] = None, quote: bool = True) -> None:
+        self.name, self.command, self.timeout_s, self.parse_score, self.cwd, self.quote = name, command, timeout_s, parse_score, cwd, quote
+
+    def render(self, outcome: ProgramOutcome) -> str:
+        """The command line that :meth:`verify` would run for ``outcome``."""
+        q = (lambda v: shlex.quote(str(v))) if self.quote else (lambda v: v)
+        values = {k: q(v) for k, v in outcome.payload.items()}
+        values["program_id"] = q(outcome.program_id)
+        return self.command.format(**values)
 
     async def verify(self, outcome: ProgramOutcome) -> float:
-        cmd = self.command.format(program_id=outcome.program_id, **outcome.payload)
+        cmd = self.render(outcome)
         proc = await asyncio.create_subprocess_shell(cmd, cwd=self.cwd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
         try:
             out, _ = await asyncio.wait_for(proc.communicate(), timeout=self.timeout_s)
         except asyncio.TimeoutError:
             proc.kill()
+            await proc.wait()
             return 0.0
         if self.parse_score:
             try:
@@ -109,6 +124,13 @@ class LLMJudgeVerifier(Verifier):
         "Grade the answer to the task on a scale from 0 to 1, where 1 is fully correct.\n"
         "Task:\n{task}\n\nAnswer:\n{answer}\n\n{reference}Reply with only the number."
     )
+    _SCORE = re.compile(r"(?<![\d.])(?:0(?:\.\d+)?|1(?:\.0+)?)(?!\.?\d)")
+    """The first number in [0, 1] in the reply; ``10``, ``1.5`` or ``70/100`` are not scores."""
+
+    @classmethod
+    def parse_score(cls, text: str) -> float:
+        m = cls._SCORE.search(text or "")
+        return float(m.group()) if m else 0.0
 
     def __init__(self, name: str, url: str, model: str, api_key: str = "EMPTY", timeout_s: float = 120.0) -> None:
         self.name, self.url, self.model, self.api_key, self.timeout_s = name, url.rstrip("/"), model, api_key, timeout_s
@@ -124,7 +146,4 @@ class LLMJudgeVerifier(Verifier):
             r = await c.post(f"{self.url}/chat/completions", json=body, headers={"Authorization": f"Bearer {self.api_key}"})
             r.raise_for_status()
             text = r.json()["choices"][0]["message"]["content"]
-        import re
-
-        m = re.search(r"[01](?:\.\d+)?", text)
-        return min(max(float(m.group()), 0.0), 1.0) if m else 0.0
+        return self.parse_score(str(text or ""))

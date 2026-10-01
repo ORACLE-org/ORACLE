@@ -33,7 +33,7 @@ async def main():
     for b, ws in by.items():
         print(f"{b}: {len(ws)} programs, mean wait {sum(ws) / len(ws):.2f}s, max {max(ws):.2f}s")
     print("diverted:", disc.n_diverted, "of", disc.n_dispatch)
-    print("learned expected peak:", {n: round(l.c_hat) for n, l in disc.ledgers.items()})
+    print("learned expected peak:", {n: round(led.c_hat) for n, led in disc.ledgers.items()})
 
 
 asyncio.run(main())

@@ -8,35 +8,37 @@ from oracle.scheduling.capacity import VLLMCapacity, SGLangCapacity
 
 def test_ledger_reserves_expected_peak_and_learns():
     clock = [0.0]
-    l = ReservationLedger(capacity_tokens=100_000, rho=0.8, peak_prior=20_000, prior_weight=1, duration_prior_s=0.0, clock=lambda: clock[0])
-    assert l.fits() and l.free_slots() == 4  # 80k / 20k
+    led = ReservationLedger(capacity_tokens=100_000, rho=0.8, peak_prior=20_000, prior_weight=1, duration_prior_s=0.0, clock=lambda: clock[0])
+    assert led.fits() and led.free_slots() == 4  # 80k / 20k
     for i in range(4):
-        l.reserve(f"p{i}", tokens=1000)
-    assert not l.fits() and l.free_slots() == 0
-    assert l.reserved() == 4 * 20_000  # floor at c_hat even though contexts are small
-    l.update("p0", 50_000)
-    assert l.reserved() == 50_000 + 3 * 20_000
+        led.reserve(f"p{i}", tokens=1000)
+    assert not led.fits() and led.free_slots() == 0
+    assert led.reserved() == 4 * 20_000  # floor at c_hat even though contexts are small
+    led.update("p0", 50_000)
+    assert led.reserved() == 50_000 + 3 * 20_000
     clock[0] = 10.0
-    l.release("p0", peak_tokens=60_000)
-    assert l.c_hat == (20_000 + 60_000) / 2 and l.d_hat == 5.0
-    assert l.release("nope") is False
+    led.release("p0", peak_tokens=60_000)
+    assert led.c_hat == (20_000 + 60_000) / 2 and led.d_hat == 5.0
+    assert led.release("nope") is False
 
 
 def test_wait_forecast():
-    l = ReservationLedger(100_000, rho=1.0, peak_prior=50_000, prior_weight=1, duration_prior_s=10.0)
-    assert l.wait_forecast(0) == 0.0
-    l.reserve("a"); l.reserve("b")
-    assert l.free_slots() == 0
-    assert l.wait_forecast(0) == pytest.approx(1 * 10.0 / 2)
-    assert l.wait_forecast(3) == pytest.approx(4 * 10.0 / 2)
+    led = ReservationLedger(100_000, rho=1.0, peak_prior=50_000, prior_weight=1, duration_prior_s=10.0)
+    assert led.wait_forecast(0) == 0.0
+    led.reserve("a")
+    led.reserve("b")
+    assert led.free_slots() == 0
+    assert led.wait_forecast(0) == pytest.approx(1 * 10.0 / 2)
+    assert led.wait_forecast(3) == pytest.approx(4 * 10.0 / 2)
 
 
 def test_gate_fifo_and_release(run):
     async def go():
-        l = ReservationLedger(100_000, rho=1.0, peak_prior=50_000, prior_weight=100, max_programs=0)
-        g = AdmissionGate(l, poll_s=0.01)
-        w1 = await g.admit("p1"); w2 = await g.admit("p2")
-        assert w1 < 0.01 and w2 < 0.01 and not l.fits()
+        led = ReservationLedger(100_000, rho=1.0, peak_prior=50_000, prior_weight=100, max_programs=0)
+        g = AdmissionGate(led, poll_s=0.01)
+        w1 = await g.admit("p1")
+        w2 = await g.admit("p2")
+        assert w1 < 0.01 and w2 < 0.01 and not led.fits()
         t3 = asyncio.create_task(g.admit("p3"))
         t4 = asyncio.create_task(g.admit("p4"))
         await asyncio.sleep(0.03)

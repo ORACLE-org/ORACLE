@@ -15,19 +15,20 @@ feedback and works in two modes:
   with that probability; set it to 0 for the pure rule.
 
 Only the memory rule is exercised in the unit tests; the LLM path is a thin
-HTTP call.  Inside ORACLE the reward is the paper's delayed reward, so the
-memory stores verified outcomes rather than the orchestrator's own guess.
+HTTP call (``aselect`` makes it asynchronously so that the server's event loop
+is not blocked while the orchestrator answers).  Inside ORACLE the reward is
+the paper's delayed reward, so the memory stores verified outcomes rather than
+the orchestrator's own guess.
 """
 from __future__ import annotations
 
-import json
 import re
 from typing import Any, Dict, List, Optional, Sequence
 
 import numpy as np
 
 from ..types import RoutingContext
-from .base import ModelSelector
+from .base import ModelSelector, finite_reward
 from .registry import register_selector
 
 _PROMPT = """You are a routing orchestrator. Choose which model should solve the task.
@@ -111,28 +112,47 @@ class ACRouterSelector(ModelSelector):
         return [m for m in self.models if means.get(m) == best][-1]
 
     # --- orchestrator LLM ---------------------------------------------------
-    def _ask_llm(self, ctx: RoutingContext, nb: List[Dict[str, Any]]) -> Optional[str]:
-        import httpx
-
+    def _llm_request(self, ctx: RoutingContext, nb: List[Dict[str, Any]]) -> Dict[str, Any]:
         mem = "\n".join(f"- [{n['model']}] reward={n['reward']:.2f} sim={n['sim']:.2f}: {n['prompt'][:200]}" for n in nb) or "(none)"
-        body = {
+        return {
             "model": self.orchestrator_model,
             "messages": [{"role": "user", "content": _PROMPT.format(models=", ".join(self.models), memory=mem, task=ctx.prompt[:2000])}],
             "max_tokens": 16,
             "temperature": 0,
         }
-        self.llm_calls += 1
-        try:
-            r = httpx.post(f"{self.orchestrator_url}/chat/completions", json=body, headers={"Authorization": f"Bearer {self.api_key}"}, timeout=self.timeout_s)
-            r.raise_for_status()
-            text = r.json()["choices"][0]["message"]["content"]
-        except Exception:
-            self.llm_failures += 1
-            return None
+
+    def _parse_answer(self, response: Dict[str, Any]) -> Optional[str]:
+        """Map the orchestrator's reply to one of ``self.models`` (longest name first), ``None`` if it named none."""
+        text = str(response["choices"][0]["message"]["content"] or "")
         for m in sorted(self.models, key=len, reverse=True):
             if re.search(re.escape(m), text, re.IGNORECASE):
                 return m
         return None
+
+    def _ask_llm(self, ctx: RoutingContext, nb: List[Dict[str, Any]]) -> Optional[str]:
+        import httpx
+
+        self.llm_calls += 1
+        try:
+            r = httpx.post(f"{self.orchestrator_url}/chat/completions", json=self._llm_request(ctx, nb), headers={"Authorization": f"Bearer {self.api_key}"}, timeout=self.timeout_s)
+            r.raise_for_status()
+            return self._parse_answer(r.json())
+        except Exception:
+            self.llm_failures += 1
+            return None
+
+    async def _ask_llm_async(self, ctx: RoutingContext, nb: List[Dict[str, Any]]) -> Optional[str]:
+        import httpx
+
+        self.llm_calls += 1
+        try:
+            async with httpx.AsyncClient(timeout=self.timeout_s) as c:
+                r = await c.post(f"{self.orchestrator_url}/chat/completions", json=self._llm_request(ctx, nb), headers={"Authorization": f"Bearer {self.api_key}"})
+            r.raise_for_status()
+            return self._parse_answer(r.json())
+        except Exception:
+            self.llm_failures += 1
+            return None
 
     # --- contract -----------------------------------------------------------
     def select(self, ctx: RoutingContext) -> str:
@@ -144,11 +164,22 @@ class ACRouterSelector(ModelSelector):
                 return m
         return self.memory_rule(nb)
 
+    async def aselect(self, ctx: RoutingContext) -> str:
+        """Same as :meth:`select`, but the orchestrator call does not block the event loop."""
+        self.n_select += 1
+        nb = self.neighbours(ctx)
+        if self.orchestrator_url:
+            m = await self._ask_llm_async(ctx, nb)
+            if m is not None:
+                return m
+        return self.memory_rule(nb)
+
     def update(self, ctx: RoutingContext, model: str, reward: float) -> None:
         self.n_update += 1
         self._check(model)
+        r = finite_reward(reward)
         self._emb.append(self._embed(ctx))
-        self._mem.append({"prompt": ctx.prompt, "model": model, "reward": float(reward)})
+        self._mem.append({"prompt": ctx.prompt, "model": model, "reward": r})
         if len(self._mem) > self.max_memory:
             self._emb.pop(0)
             self._mem.pop(0)

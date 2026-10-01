@@ -31,7 +31,7 @@ class ModelConfig:
     price_out: float = 0.0
     """Dollars per 1M completion tokens."""
     capacity: str = "auto"
-    """``auto`` (detect vllm/sglang from the backend), ``vllm``, ``sglang`` or ``static``."""
+    """``auto`` (``capacity_tokens`` if set, else detect vLLM/SGLang from the backend), ``vllm``, ``sglang`` or ``static``."""
     capacity_tokens: Optional[int] = None
     """KV-cache capacity in tokens for ``static``."""
     api_key: str = "EMPTY"
@@ -40,6 +40,7 @@ class ModelConfig:
 @dataclass
 class RouterConfig:
     enabled: bool = True
+    """``false`` = scheduling only: the ``fixed`` selector (first model, or the client's ``force_model``), no learning."""
     selector: str = "linucb"
     selector_kwargs: Dict[str, Any] = field(default_factory=dict)
     features: str = "hashing"
@@ -111,16 +112,23 @@ class OracleConfig:
 
     @staticmethod
     def from_dict(d: Dict[str, Any]) -> "OracleConfig":
-        d = dict(d or {})
-        models = [ModelConfig(**m) if isinstance(m, dict) else ModelConfig(name=str(m)) for m in d.get("models", [])]
-        ver = dict(d.get("verification", {}))
-        ver["verifiers"] = [VerifierConfig(**v) for v in ver.get("verifiers", [])]
+        """Build from a plain dict (the parsed YAML).  Unknown keys, wrong types and duplicate model names raise ``ValueError``."""
+        if d is None:
+            d = {}
+        if not isinstance(d, dict):
+            raise ValueError(f"config must be a mapping, got {type(d).__name__}")
+        models = [_section(ModelConfig, "models", m) if isinstance(m, dict) else ModelConfig(name=str(m)) for m in (d.get("models") or [])]
+        names = [m.name for m in models]
+        if len(set(names)) != len(names):
+            raise ValueError(f"duplicate model names in config: {names}")
+        ver = dict(d.get("verification") or {})
+        ver["verifiers"] = [_section(VerifierConfig, "verification.verifiers", v) for v in (ver.get("verifiers") or [])]
         return OracleConfig(
             models=models,
-            router=RouterConfig(**d.get("router", {})),
-            verification=VerificationConfig(**ver),
-            scheduler=SchedulerConfig(**d.get("scheduler", {})),
-            server=ServerConfig(**d.get("server", {})),
+            router=_section(RouterConfig, "router", d.get("router")),
+            verification=_section(VerificationConfig, "verification", ver),
+            scheduler=_section(SchedulerConfig, "scheduler", d.get("scheduler")),
+            server=_section(ServerConfig, "server", d.get("server")),
         )
 
     @staticmethod
@@ -135,6 +143,18 @@ class OracleConfig:
 
     def to_dict(self) -> Dict[str, Any]:
         return asdict(self)
+
+
+def _section(cls, name: str, data: Any):
+    """Instantiate a config dataclass, turning the TypeError of a bad key/missing field into a readable ValueError."""
+    if data is None:
+        data = {}
+    if not isinstance(data, dict):
+        raise ValueError(f"config section {name!r} must be a mapping, got {type(data).__name__}")
+    try:
+        return cls(**data)
+    except TypeError as e:
+        raise ValueError(f"config section {name!r}: {e}") from None
 
 
 # ---------------------------------------------------------------------------
@@ -213,12 +233,14 @@ def build_router(cfg: OracleConfig):
         feats = ConcatFeatures(HashingFeatures(cfg.router.feature_dim), TaskTypeFeatures(task_types))
     else:
         raise ValueError(f"unknown features {cfg.router.features!r}")
-    skw = dict(cfg.router.selector_kwargs)
-    if cfg.router.selector == "acrouter":
+    selector, skw = cfg.router.selector, dict(cfg.router.selector_kwargs)
+    if not cfg.router.enabled:  # scheduling only: every program goes to the first (or the forced) model, nothing learns
+        selector, skw = "fixed", {}
+    if selector == "acrouter":
         skw.setdefault("embedder", embedder)
     return Router(
         names,
-        selector=cfg.router.selector,
+        selector=selector,
         selector_kwargs=skw,
         verifiers=build_verifiers(cfg.verification),
         verifier_selector=vsel,
@@ -229,7 +251,7 @@ def build_router(cfg: OracleConfig):
 
 
 def build_scheduler(cfg: OracleConfig):
-    from .scheduling.capacity import SGLangCapacity, StaticCapacity, VLLMCapacity
+    from .scheduling.capacity import make_capacity_source
     from .scheduling.disc import DISC
     from .scheduling.dispatch import DispatchPolicy
 
@@ -238,15 +260,11 @@ def build_scheduler(cfg: OracleConfig):
     for m in cfg.models:
         b = m.backend or m.name
         if b in backends:
-            continue
-        if m.capacity == "static" or (m.capacity == "auto" and m.capacity_tokens):
-            backends[b] = StaticCapacity(m.capacity_tokens or 0)
-        elif m.capacity == "sglang":
-            backends[b] = SGLangCapacity(m.url)
-        elif m.capacity in ("vllm", "auto"):
-            backends[b] = VLLMCapacity(m.url) if m.url else StaticCapacity(0)
-        else:
-            raise ValueError(f"unknown capacity {m.capacity!r}")
+            continue  # co-located models share one ledger; the first model's capacity settings apply
+        try:
+            backends[b] = make_capacity_source(m.capacity, m.url, m.capacity_tokens)
+        except ValueError as e:
+            raise ValueError(f"model {m.name!r}: {e}") from None
     policy = DispatchPolicy(beta=s.beta, w0=s.w0) if s.beta > 0 else None
     return DISC(
         backends,

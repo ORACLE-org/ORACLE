@@ -2,7 +2,8 @@
 
 Every routing policy ORACLE can use (the default LinUCB bandit, ACRouter,
 RouteLLM, a fixed model, your own) implements :class:`ModelSelector`.  The
-rest of the system only ever calls three methods:
+rest of the system only ever calls three methods (plus an optional async
+``aselect`` for selectors that do I/O):
 
 * :meth:`ModelSelector.select` picks a model for a new program;
 * :meth:`ModelSelector.update` feeds back the delayed reward once the program's
@@ -23,10 +24,19 @@ Write a new one in a few lines::
 """
 from __future__ import annotations
 
+import math
 from abc import ABC, abstractmethod
 from typing import Any, Dict, Optional, Sequence
 
 from ..types import RoutingContext
+
+
+def finite_reward(reward: float) -> float:
+    """Validate a delayed reward before a learner uses it: a NaN/inf would corrupt its statistics for good."""
+    r = float(reward)
+    if not math.isfinite(r):
+        raise ValueError(f"reward must be finite, got {reward!r}")
+    return r
 
 
 class ModelSelector(ABC):
@@ -55,6 +65,15 @@ class ModelSelector(ABC):
     @abstractmethod
     def update(self, ctx: RoutingContext, model: str, reward: float) -> None:
         """Delayed feedback for a completed program routed to ``model``."""
+
+    async def aselect(self, ctx: RoutingContext) -> str:
+        """Async variant of :meth:`select`, used by the async entry points (:class:`oracle.Oracle`, the server).
+
+        The default calls :meth:`select`.  Override it in selectors that do I/O
+        (an orchestrator LLM, a remote scoring service) so that the event loop is
+        not blocked while they wait; keep :meth:`select` for synchronous callers.
+        """
+        return self.select(ctx)
 
     def estimate(self, ctx: RoutingContext, model: str) -> Optional[float]:
         """Current estimate of the reward/accuracy of ``model`` for this context.

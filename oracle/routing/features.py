@@ -27,7 +27,9 @@ class HashingFeatures:
     """
 
     def __init__(self, dim: int = 64, max_tokens: int = 512) -> None:
-        self.dim = dim
+        if int(dim) < 3:
+            raise ValueError("HashingFeatures needs dim >= 3 (hashed words + length + bias)")
+        self.dim = int(dim)
         self.max_tokens = max_tokens
 
     def __call__(self, prompt: str, metadata: Dict[str, Any]) -> np.ndarray:

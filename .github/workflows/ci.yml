@@ -1,0 +1,75 @@
+# Runs on every pull request and on pushes to main: lint, the test suite on every supported
+# Python version, the offline CLI/examples/configs, and a clean wheel build + install.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: test (python ${{ matrix.python }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.10", "3.11", "3.12", "3.13"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+          cache: pip
+      - name: Install (core + server + dev tools)
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
+      - name: Lint
+        run: ruff check .
+      - name: Unit tests
+        run: pytest -q
+      - name: CLI smoke test (no GPUs, no network)
+        run: |
+          oracle selectors
+          oracle demo --programs 100 --time-scale 0
+      - name: Offline examples
+        run: |
+          for f in examples/01_router_only.py examples/02_scheduler_only.py examples/03_router_and_disc.py examples/04_custom_selector.py examples/05_custom_verifier.py; do
+            echo "== $f"
+            python "$f"
+          done
+      - name: Example configs build
+        run: |
+          for c in examples/configs/full.yaml examples/configs/router_only.yaml examples/configs/scheduler_only.yaml; do
+            API_KEY=test python -c "import sys; from oracle.config import OracleConfig, build; build(OracleConfig.load(sys.argv[1])); print('ok', sys.argv[1])" "$c"
+          done
+
+  package:
+    name: build and install the wheel
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Build sdist and wheel
+        run: |
+          python -m pip install --upgrade pip build
+          python -m build
+      - name: Install the wheel in a clean virtualenv and import it
+        run: |
+          python -m venv /tmp/venv
+          /tmp/venv/bin/pip install --quiet dist/*.whl
+          /tmp/venv/bin/python -c "import oracle, oracle.server; print('oracle', oracle.__version__)"
+          /tmp/venv/bin/oracle selectors
+          /tmp/venv/bin/pip install --quiet "oracle-router[server] @ file://$(ls "$PWD"/dist/*.whl)"
+          /tmp/venv/bin/python -c "import importlib.resources as r; from oracle.server import create_app; assert r.files('oracle').joinpath('server/ui/index.html').is_file(), 'dashboard missing from the wheel'"

@@ -10,3 +10,5 @@ venv/
 *.pkl
 .DS_Store
 oracle_profiles/
+.ruff_cache/
+.mypy_cache/

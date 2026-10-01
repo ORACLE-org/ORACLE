@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import math
 import time
 from collections import deque
 from typing import Any, Awaitable, Callable, Deque, Dict, List, Optional
@@ -33,6 +34,10 @@ class FeedbackLoop:
         reward: the reward function (Eq. 3).
         max_concurrency: how many verifiers may run at once.
         on_reward: optional callback ``(binding, score, reward)`` after each update.
+
+    A verifier that raises, or returns a NaN/inf score, counts as a failed
+    verification: it is logged, ``failed`` is incremented and the selector is
+    *not* updated (a NaN reward would corrupt a learner's statistics for good).
     """
 
     def __init__(self, selector: ModelSelector, verifiers: Optional[Dict[str, Verifier]] = None, reward: Optional[Reward] = None, max_concurrency: int = 8, on_reward: Optional[FeedbackCallback] = None, history: int = 500) -> None:
@@ -67,14 +72,21 @@ class FeedbackLoop:
                     score = float(outcome.success)
                 else:
                     score = float(await v.verify(outcome))
+            if not math.isfinite(score):
+                raise ValueError(f"verifier {binding.verifier!r} returned a non-finite score {score!r} for program {binding.program_id}")
             score = min(max(score, 0.0), 1.0)
-            r = self.reward(score, outcome.cost)
+            r = self.reward(score, outcome.cost)  # raises on a non-finite cost when the cost term is active
+            try:
+                cost: Optional[float] = float(outcome.cost)
+                cost = cost if math.isfinite(cost) else None  # a NaN would make the dashboard's JSON invalid
+            except (TypeError, ValueError):
+                cost = None
             async with self._update_lock:  # updates are applied in arrival order
                 if binding.context is not None:
                     self.selector.update(binding.context, binding.model, r)
             binding.score, binding.reward = score, r
             self.completed += 1
-            self.history.append({"program_id": binding.program_id, "model": binding.model, "verifier": binding.verifier, "task_type": binding.context.task_type if binding.context else None, "score": score, "cost": outcome.cost, "reward": r, "verify_s": round(time.time() - t0, 3), "t": time.time()})
+            self.history.append({"program_id": binding.program_id, "model": binding.model, "verifier": binding.verifier, "task_type": binding.context.task_type if binding.context else None, "score": score, "cost": cost, "reward": r, "verify_s": round(time.time() - t0, 3), "t": time.time()})
             if self.on_reward is not None:
                 res = self.on_reward(binding, score, r)
                 if asyncio.iscoroutine(res):

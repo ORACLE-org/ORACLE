@@ -12,10 +12,10 @@ router = Router(models, selector="linucb", selector_kwargs={}, verifiers={}, ver
 |---|---|
 | `bind(program_id, prompt, metadata=None, model=None)` | create the program's row: verifier selection, features, selector choice (or the given `model`) |
 | `lookup(program_id)` | the row, or `None` |
-| `complete(program_id, outcome)` | remove the row, verify in the background, update the selector; returns the asyncio task |
+| `complete(program_id, outcome)` | remove the row, verify in the background, update the selector; returns the asyncio task (needs a running event loop) |
 | `complete_sync(...)` | same, blocking (for scripts without an event loop) |
 | `release(program_id)` | drop without feedback |
-| `context(...)`, `propose(ctx)`, `estimates(ctx)` | the pieces `bind` is made of (used by DISC) |
+| `context(...)`, `propose(ctx)` / `apropose(ctx)`, `estimates(ctx)` | the pieces `bind` is made of (used by `Oracle`) |
 | `state()` | JSON for the dashboard |
 
 `models` is an ordered list, strongest (most expensive) first. Several built-ins use that order
@@ -30,8 +30,14 @@ class ModelSelector:
     def select(self, ctx: RoutingContext) -> str: ...                   # required
     def update(self, ctx: RoutingContext, model: str, reward: float): ...  # required
     def estimate(self, ctx, model) -> float | None: ...                 # optional, lets DISC price a diversion
+    async def aselect(self, ctx) -> str: ...                            # optional, for selectors that do I/O
     def state(self) -> dict: ...                                        # optional, dashboard
 ```
+
+`select` must return one of `self.models` (the router raises `ValueError` otherwise). A selector that
+calls a service should override `aselect` with the async version of that call: `Oracle` and the
+server use `aselect`, so the event loop is not blocked while the service answers (`ACRouterSelector`
+does this for its orchestrator LLM); `select` stays for synchronous callers such as `Router.bind`.
 
 `RoutingContext` carries `program_id`, `prompt` (the initial request), `features` (a vector),
 `task_type` (from the verifier selector) and `metadata` (whatever the client sent in
