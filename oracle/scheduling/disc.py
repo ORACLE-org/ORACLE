@@ -25,12 +25,14 @@ from .ledger import ReservationLedger
 
 logger = logging.getLogger(__name__)
 
+_DEFAULT_POLICY: Any = object()  # sentinel: ``None`` means "never divert", so the default needs its own marker
+
 
 class DISC:
     """Args:
         backends: ``{name: capacity_tokens}`` or ``{name: ReservationLedger}`` or
             ``{name: CapacitySource}`` (capacity is then polled).
-        policy: the dispatch rule; ``None`` means never divert (admission only).
+        policy: the dispatch rule (a default ``DispatchPolicy()`` when omitted); ``None`` means never divert (admission only).
         ledger_kwargs: defaults for ledgers built from an integer capacity
             (``rho``, ``peak_prior``, ``per_program_overhead``, ...).
         poll_s: interval for polling capacity sources.
@@ -39,14 +41,14 @@ class DISC:
     def __init__(
         self,
         backends: Mapping[str, Union[int, ReservationLedger, CapacitySource]],
-        policy: Optional[DispatchPolicy] = DispatchPolicy(),
+        policy: Optional[DispatchPolicy] = _DEFAULT_POLICY,
         ledger_kwargs: Optional[Dict[str, Any]] = None,
         poll_s: float = 2.0,
         max_wait_s: float = 0.0,
     ) -> None:
         if not backends:
             raise ValueError("DISC needs at least one backend")
-        self.policy = policy
+        self.policy: Optional[DispatchPolicy] = DispatchPolicy() if policy is _DEFAULT_POLICY else policy  # a fresh one per DISC
         self.ledgers: Dict[str, ReservationLedger] = {}
         self.gates: Dict[str, AdmissionGate] = {}
         self.sources: Dict[str, CapacitySource] = {}

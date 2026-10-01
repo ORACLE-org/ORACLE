@@ -7,7 +7,7 @@ from typing import Any, Dict, Optional, Sequence
 import numpy as np
 
 from ..types import RoutingContext
-from .base import ModelSelector
+from .base import ModelSelector, finite_reward
 from .registry import register_selector
 
 
@@ -17,8 +17,10 @@ def _ctx_features(ctx: RoutingContext, d: int) -> np.ndarray:
         x[-1] = 1.0
         return x
     x = np.asarray(ctx.features, dtype=float)
-    if x.shape[0] != d:
-        raise ValueError(f"feature dim {x.shape[0]} != selector dim {d}")
+    if x.shape != (d,):
+        raise ValueError(f"feature shape {x.shape} != selector dim ({d},)")
+    if not np.isfinite(x).all():
+        raise ValueError("features must be finite (no NaN/inf)")
     return x
 
 
@@ -70,8 +72,9 @@ class LinUCB(ModelSelector):
         self.n_update += 1
         j = self._check(model)
         x = _ctx_features(ctx, self.d)
+        r = finite_reward(reward)
         self.A[j] += np.outer(x, x)
-        self.b[j] += float(reward) * x
+        self.b[j] += r * x
         self._Ainv[j] = np.linalg.inv(self.A[j])
 
     def estimate(self, ctx: RoutingContext, model: str) -> Optional[float]:
@@ -145,9 +148,10 @@ class TypeUCB(ModelSelector):
     def update(self, ctx: RoutingContext, model: str, reward: float) -> None:
         self.n_update += 1
         self._check(model)
+        r = finite_reward(reward)
         k = (self._cell(ctx), model)
         self.n[k] = self.n.get(k, 0) + 1
-        self.s[k] = self.s.get(k, 0.0) + float(reward)
+        self.s[k] = self.s.get(k, 0.0) + r
 
     def estimate(self, ctx: RoutingContext, model: str) -> Optional[float]:
         k = (self._cell(ctx), model)

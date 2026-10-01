@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import hashlib
 import re
-from typing import List, Optional, Protocol, Sequence
+from typing import Optional, Protocol, Sequence
 
 import numpy as np
 

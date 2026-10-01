@@ -6,6 +6,8 @@
 | <a href="docs/README.md"><b>Docs</b></a> | <a href="examples/"><b>Examples</b></a> | <a href="https://arxiv.org/pdf/2607.22465"><b>Paper</b></a> |
 </p>
 
+<p align="center"><a href="https://github.com/ORACLE-org/ORACLE/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/ORACLE-org/ORACLE/actions/workflows/ci.yml/badge.svg"></a></p>
+
 ---
 
 ## About
@@ -72,7 +74,7 @@ No GPUs at hand? `oracle demo` runs a synthetic workload through every selector.
 from oracle import Router, ProgramOutcome, PrototypeVerifierSelector
 
 router = Router(["strong", "weak"], selector="linucb",
-                verifiers={"swe": run_tests, "tau2": check_state},
+                verifiers={"swe": run_tests, "tau2": check_state},      # Verifier objects or plain fn(outcome) -> score
                 verifier_selector=PrototypeVerifierSelector({"swe": swe_examples, "tau2": tau2_examples}))
 
 b = router.bind("task-17", prompt=first_user_message)      # b.model, b.verifier
@@ -85,9 +87,9 @@ Or `oracle serve --no-scheduler`, or `scheduler: {enabled: false}` in the config
 **Scheduling only** (keep your router, add admission control):
 
 ```python
-from oracle import DISC
+from oracle import DISC, VLLMCapacity
 
-disc = DISC({"gpu-a": VLLMCapacity("http://localhost:8001/v1"), "gpu-b": 120_000})
+disc = DISC({"gpu-a": VLLMCapacity("http://localhost:8001/v1"), "gpu-b": 120_000})   # capacity from /metrics, or a number
 backend, _ = disc.dispatch("gpu-a", estimates=None)   # proposal in, backend out (no estimates = no diversion)
 await disc.admit("task-17", backend)                   # blocks until the ledger has room
 ...
@@ -149,9 +151,19 @@ tests/                  pytest (no GPUs, no network)
 
 ```bash
 pip install -e ".[dev]"
-pytest -q
-oracle demo --programs 500
+ruff check .                 # lint
+pytest -q                    # unit tests (no GPUs, no network)
+oracle demo --programs 500   # synthetic end-to-end run
 ```
+
+## Contributing
+
+We welcome and value any contributions and collaborations. Please create a pull request.
+
+Every pull request runs the [CI workflow](.github/workflows/ci.yml): `ruff`, the test suite on
+Python 3.10 to 3.13, the offline examples and configs, and a clean wheel build. Please run
+`ruff check . && pytest -q` before opening the PR and add a test with each fix or feature; bug
+reports and questions are welcome as [issues](https://github.com/ORACLE-org/ORACLE/issues).
 
 ## Citation
 

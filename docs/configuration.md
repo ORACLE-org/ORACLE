@@ -1,6 +1,7 @@
 # Configuration (`oracle.yaml`)
 
-`${ENV_VAR}` is expanded anywhere in the file. Every key is optional except `models`.
+`${ENV_VAR}` is expanded anywhere in the file (an unset variable is left as written). Every key is
+optional except `models`; an unknown key, a wrong type or a duplicate model name is a `ValueError` at load time.
 
 ```yaml
 models:                      # ordered strongest -> weakest
@@ -11,11 +12,11 @@ models:                      # ordered strongest -> weakest
     price_in: 0.3            # $ per 1M prompt tokens
     price_out: 0.9           # $ per 1M completion tokens
     capacity: auto           # auto | vllm | sglang | static
-    capacity_tokens: null    # tokens, for static (auto uses it when set)
+    capacity_tokens: null    # tokens: required for static; auto uses it when set, else detects vLLM/SGLang at url
     api_key: EMPTY
 
 router:
-  enabled: true
+  enabled: true              # false = scheduling only: the fixed selector (first model or force_model), nothing learns
   selector: linucb           # see docs/routing.md
   selector_kwargs: {}        # passed to the selector's __init__
   features: hashing          # hashing | embedding | task_type | hashing+task_type

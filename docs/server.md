@@ -13,16 +13,21 @@ for the id, in a header.
 
 | field | meaning |
 |---|---|
-| `program_id` (or header `X-Program-ID` / `X-Session-ID`) | the program this request belongs to. Missing: `"default"`. |
+| `program_id` (or header `X-Program-ID` / `X-Session-ID`) | the program this request belongs to. Missing, empty or `null`: `"default"` (one shared, never-ending program: always send an id). |
 | `program_done: true` | this is the program's last request: release the slot after the response, run the verifier |
 | `program_success: 0..1` | the harness's own score (used by `reported` verifiers) |
 | `program_payload: {...}` | data for the verifier (container id, repo path, final state, ...) |
 | `program_metadata: {...}` | anything for the selector / verifier selector (`task_type`, user, budget) |
-| `force_model: name` | bypass the selector for this program (still scheduled and verified) |
+| `force_model: name` | bypass the selector for this program's first request (still scheduled and verified); later requests keep the binding |
 | `model` | ignored for routing (use any string); ORACLE replaces it with the backend's served name |
 
 These fields are stripped before forwarding. Streaming is passed through; ORACLE turns on
 `stream_options.include_usage` to read token usage from the last chunk.
+
+A body that is not a JSON object, a `program_success` outside [0, 1], a `program_metadata` or
+`program_payload` that is not an object, or an unknown `force_model` is answered with `400` and a
+message before anything is bound or forwarded. The same checks apply to the `complete` endpoints
+(`success`, `cost`, `payload`).
 
 ## Endpoints
 

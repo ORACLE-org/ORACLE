@@ -19,7 +19,7 @@ server = ["fastapi>=0.100", "uvicorn>=0.23", "httpx>=0.24"]
 embeddings = ["sentence-transformers>=2.2"]
 routellm = ["routellm"]
 litellm = ["litellm"]
-dev = ["pytest>=7", "pytest-asyncio>=0.21", "fastapi>=0.100", "uvicorn>=0.23", "httpx>=0.24"]
+dev = ["pytest>=7", "pytest-asyncio>=0.24", "ruff>=0.5", "fastapi>=0.100", "uvicorn>=0.23", "httpx>=0.24"]
 all = ["fastapi>=0.100", "uvicorn>=0.23", "httpx>=0.24", "sentence-transformers>=2.2"]
 
 [project.scripts]
@@ -36,4 +36,14 @@ oracle = ["server/ui/*.html"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
 testpaths = ["tests"]
+
+[tool.ruff]
+target-version = "py310"
+line-length = 200
+extend-exclude = ["docs"]
+
+[tool.ruff.lint]
+# pyflakes + the pycodestyle errors that are real bugs (undefined names, unused imports, syntax); line length is not enforced
+select = ["E4", "E7", "E9", "F"]

@@ -1,7 +1,7 @@
 """Selectors that do not learn: useful as baselines and as plumbing."""
 from __future__ import annotations
 
-from typing import Any, Callable, Dict, Optional, Sequence
+from typing import Callable, Optional, Sequence
 
 import numpy as np
 
@@ -53,6 +53,10 @@ class Random(ModelSelector):
         super().__init__(models)
         self.rng = np.random.default_rng(seed)
         w = np.ones(len(self.models)) if weights is None else np.asarray(weights, dtype=float)
+        if w.shape != (len(self.models),):
+            raise ValueError(f"weights must have one entry per model ({len(self.models)}), got shape {w.shape}")
+        if not np.isfinite(w).all() or (w < 0).any() or w.sum() <= 0:
+            raise ValueError("weights must be finite, non-negative and not all zero")
         self.p = w / w.sum()
 
     def select(self, ctx: RoutingContext) -> str:

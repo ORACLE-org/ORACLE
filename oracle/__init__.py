@@ -15,8 +15,8 @@ OpenAI-compatible proxy with a dashboard.
 """
 from .types import Binding, ProgramOutcome, RoutingContext
 from .routing import Router, ModelSelector, register_selector, make_selector, available_selectors, Reward
-from .verification import Verifier, CallableVerifier, PrototypeVerifierSelector, FeedbackLoop
-from .scheduling import DISC, ReservationLedger, AdmissionGate, DispatchPolicy
+from .verification import Verifier, CallableVerifier, ReportedVerifier, CommandVerifier, HTTPVerifier, LLMJudgeVerifier, PrototypeVerifierSelector, FeedbackLoop
+from .scheduling import DISC, ReservationLedger, AdmissionGate, DispatchPolicy, StaticCapacity, VLLMCapacity, SGLangCapacity, AutoCapacity
 from .core import Oracle
 from .config import OracleConfig
 
@@ -24,7 +24,7 @@ __version__ = "0.1.0"
 __all__ = [
     "Binding", "ProgramOutcome", "RoutingContext",
     "Router", "ModelSelector", "register_selector", "make_selector", "available_selectors", "Reward",
-    "Verifier", "CallableVerifier", "PrototypeVerifierSelector", "FeedbackLoop",
-    "DISC", "ReservationLedger", "AdmissionGate", "DispatchPolicy",
+    "Verifier", "CallableVerifier", "ReportedVerifier", "CommandVerifier", "HTTPVerifier", "LLMJudgeVerifier", "PrototypeVerifierSelector", "FeedbackLoop",
+    "DISC", "ReservationLedger", "AdmissionGate", "DispatchPolicy", "StaticCapacity", "VLLMCapacity", "SGLangCapacity", "AutoCapacity",
     "Oracle", "OracleConfig", "__version__",
 ]

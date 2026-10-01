@@ -32,7 +32,7 @@ disconnected waiter leaves the queue (and gives back a reservation granted in th
 
 ## Dispatch rule
 
-`DispatchPolicy(beta=0.5, w0=60)`. For the proposed model `p` and each alternative `m` with a
+`DispatchPolicy(beta=0.5, w0=60)` (`DISC(policy=None)` disables diversion). For the proposed model `p` and each alternative `m` with a
 shorter forecast wait, divert to the `m` with the largest positive margin
 
 ```
@@ -58,13 +58,16 @@ disc.snapshot()                                       # dashboard JSON
 ```
 
 `dispatch` counts the program as *pending* on its backend until `admit` is called, so programs
-bound but not yet at the gate are included in the next forecast.
+bound but not yet at the gate are included in the next forecast. When several models share a
+backend (`backend:` in the model config), the dispatch rule sees the best estimate among them and a
+diverted program runs the best-estimated model of its new backend.
 
 ## Capacity sources
 
 | class | reads |
 |---|---|
 | `StaticCapacity(tokens)` | a number you give |
+| `AutoCapacity(url)` | tries vLLM's `/metrics` first, then SGLang's `/get_server_info`, and remembers which one answered (`capacity: auto`) |
 | `VLLMCapacity(url)` | `/metrics`: `vllm:cache_config_info` (block_size × num_gpu_blocks) and `vllm:gpu_cache_usage_perc` |
 | `SGLangCapacity(url)` | `/get_server_info` (`max_total_num_tokens`) and `/metrics` (`sglang:token_usage`) |
 

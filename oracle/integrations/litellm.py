@@ -22,7 +22,7 @@ from __future__ import annotations
 from typing import Any, Dict, List, Optional
 
 from ..routing.router import Router
-from ..server.app import first_user_text
+from ..server.fields import first_user_text
 
 try:  # pragma: no cover - optional dependency
     from litellm.router import CustomRoutingStrategyBase

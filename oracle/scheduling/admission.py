@@ -9,8 +9,8 @@ from __future__ import annotations
 
 import asyncio
 import time
-from collections import Counter
-from typing import Any, Awaitable, Callable, Dict, List, Optional
+from collections import Counter, deque
+from typing import Any, Awaitable, Callable, Deque, Dict, List, Optional
 
 from .ledger import ReservationLedger
 
@@ -21,12 +21,14 @@ class ClientGone(Exception):
 
 class AdmissionGate:
     def __init__(self, ledger: ReservationLedger, poll_s: float = 1.0, max_wait_s: float = 0.0, clock: Callable[[], float] = time.time) -> None:
+        if not float(poll_s) > 0:
+            raise ValueError("poll_s must be positive")
         self.ledger = ledger
         self.poll_s = float(poll_s)
         self.max_wait_s = float(max_wait_s)  # 0 = wait forever
         self.clock = clock
         self.queue: List[Dict[str, Any]] = []
-        self.waits: List[float] = []
+        self.waits: Deque[float] = deque(maxlen=10_000)  # bounded: the server runs for weeks
         self.stats = Counter()
 
     @property
@@ -51,20 +53,30 @@ class AdmissionGate:
                     self.stats["forced"] += 1
                     self._grant(ent)
                     break
-                try:
-                    await asyncio.wait_for(ent["ev"].wait(), timeout=self.poll_s)
-                except asyncio.TimeoutError:
+                await self._wait(ent["ev"], self.poll_s)
+                if not ent["ev"].is_set():  # timer, not a grant: re-check the ledger (capacity may have been refreshed)
                     self.pump()
         except BaseException:
             if ent in self.queue:
                 self.queue.remove(ent)
-            if ent["admitted"]:
-                self.ledger.release(program_id)
+            if ent["admitted"]:  # granted in the same instant: give the slot back and wake the next waiter now
+                self.ledger.release(program_id, learn=False)
+                self.pump()
             self.stats["gone"] += 1
             raise
         waited = self.clock() - ent["t"]
         self.waits.append(waited)
         return waited
+
+    @staticmethod
+    async def _wait(ev: asyncio.Event, timeout: float) -> None:
+        """``ev.wait()`` bounded by ``timeout``.  Unlike ``asyncio.wait_for`` on Python < 3.12 it never swallows a
+        cancellation that arrives in the same instant as the grant, so a cancelled waiter always gives its slot back."""
+        waiter = asyncio.ensure_future(ev.wait())
+        try:
+            await asyncio.wait({waiter}, timeout=timeout)
+        finally:
+            waiter.cancel()
 
     def _grant(self, ent: Dict[str, Any]) -> None:
         if ent in self.queue:

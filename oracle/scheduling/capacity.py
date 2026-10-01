@@ -48,7 +48,7 @@ class VLLMCapacity(CapacitySource):
             nb = re.search(r'num_gpu_blocks="(\d+)"', m.group(1))
             if bs and nb:
                 cap = int(bs.group(1)) * int(nb.group(1))
-        u = re.search(r"vllm:(?:gpu_cache_usage_perc|kv_cache_usage_perc)\{[^}]*\}\s+([\d.eE+-]+)", text)
+        u = re.search(r"vllm:(?:gpu_cache_usage_perc|kv_cache_usage_perc)(?:\{[^}]*\})?\s+([\d.eE+-]+)", text)
         used = float(u.group(1)) if u else None
         return cap, used
 
@@ -94,13 +94,38 @@ class SGLangCapacity(CapacitySource):
         return cap, used
 
 
+class AutoCapacity(CapacitySource):
+    """Detect the engine behind ``url``: vLLM's ``/metrics`` first, then SGLang's ``/get_server_info``.
+
+    The first source that reports a capacity is remembered (``detected``) and
+    used from then on.
+    """
+
+    def __init__(self, url: str, timeout_s: float = 5.0) -> None:
+        self.url, self.timeout_s = _strip_v1(url), timeout_s
+        self._sources = {"vllm": VLLMCapacity(url, timeout_s), "sglang": SGLangCapacity(url, timeout_s)}
+        self.detected: Optional[str] = None
+
+    async def fetch(self) -> Tuple[Optional[int], Optional[float]]:
+        for kind in ([self.detected] if self.detected else ["vllm", "sglang"]):
+            try:
+                cap, used = await self._sources[kind].fetch()
+            except Exception:
+                continue
+            if cap:
+                self.detected = kind
+                return cap, used
+        return None, None
+
+
 def make_capacity_source(kind: str, url: Optional[str] = None, capacity_tokens: Optional[int] = None) -> CapacitySource:
-    if kind == "static":
-        if capacity_tokens is None:
-            raise ValueError("static capacity needs capacity_tokens")
+    """``static`` needs ``capacity_tokens``; ``vllm``/``sglang`` need ``url``; ``auto`` takes ``capacity_tokens`` if given, else detects the engine at ``url``."""
+    if kind == "static" or (kind == "auto" and capacity_tokens):
+        if not capacity_tokens or int(capacity_tokens) <= 0:
+            raise ValueError("static capacity needs a positive capacity_tokens")
         return StaticCapacity(capacity_tokens)
-    if kind == "vllm":
-        return VLLMCapacity(url or "")
-    if kind == "sglang":
-        return SGLangCapacity(url or "")
-    raise ValueError(f"unknown capacity source {kind!r} (static | vllm | sglang)")
+    if kind not in ("auto", "vllm", "sglang"):
+        raise ValueError(f"unknown capacity source {kind!r} (auto | static | vllm | sglang)")
+    if not url:
+        raise ValueError(f"{kind} capacity needs the backend url (or set capacity_tokens for a static capacity)")
+    return {"auto": AutoCapacity, "vllm": VLLMCapacity, "sglang": SGLangCapacity}[kind](url)
