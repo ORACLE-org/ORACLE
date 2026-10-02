@@ -42,10 +42,12 @@ front of it instead (same behaviour, plus the dashboard).
 
 ## LiteLLM
 
-ORACLE's router is also proposed upstream as a LiteLLM strategy (`auto_router/oracle_router`), where
-any LiteLLM strategy router can be the decision maker and any LiteLLM guardrail the verifier. On a
-300-program stream of GSM8K and MATH-500 tasks over Qwen3.6-27B-FP8 and Qwen3.5-9B it matched the
-always-27B accuracy within 0.3 points at 46% less spend:
+ORACLE's router is also proposed upstream as a LiteLLM strategy (`auto_router/oracle_router`): the
+decision maker is LiteLLM's own adaptive-router bandit (or any LiteLLM strategy router through
+`pre_routing`) and the verifier is any LiteLLM guardrail, such as `llm_as_a_judge`. On a live math
+stream (GSM8K + MATH-500) and a replayed agentic stream (tau2-bench + SWE-bench) over
+Qwen3.6-27B-FP8 and Qwen3.5-9B, the bandit's cost weight traces the accuracy/spend frontier between
+the two models, with LiteLLM's judge as the only feedback:
 
 ![ORACLE inside LiteLLM](litellm_poc.png)
 
