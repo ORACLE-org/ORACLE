@@ -42,6 +42,14 @@ front of it instead (same behaviour, plus the dashboard).
 
 ## LiteLLM
 
+ORACLE's router is also proposed upstream as a LiteLLM strategy (`auto_router/oracle_router`), where
+any LiteLLM strategy router can be the decision maker and any LiteLLM guardrail the verifier. On a
+300-program stream of GSM8K and MATH-500 tasks over Qwen3.6-27B-FP8 and Qwen3.5-9B it matched the
+always-27B accuracy within 0.3 points at 46% less spend:
+
+![ORACLE inside LiteLLM](litellm_poc.png)
+
+
 ```python
 from oracle.integrations.litellm import OracleRoutingStrategy
 lr = litellm.Router(model_list=[...])          # model_name must match ORACLE's model names
