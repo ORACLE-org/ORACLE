@@ -42,7 +42,8 @@ front of it instead (same behaviour, plus the dashboard).
 
 ## LiteLLM
 
-ORACLE's router is also proposed upstream as a LiteLLM strategy (`auto_router/oracle_router`): the
+ORACLE's router is also [proposed upstream](https://github.com/BerriAI/litellm/pull/44290) as a
+LiteLLM strategy (`auto_router/oracle_router`, configured through `oracle_router_config`): the
 decision maker is LiteLLM's own adaptive-router bandit (or any LiteLLM strategy router through
 `pre_routing`) and the verifier is any LiteLLM guardrail, such as `llm_as_a_judge`. On a live math
 stream (GSM8K + MATH-500) and a replayed agentic stream (tau2-bench + SWE-bench) over
@@ -51,6 +52,8 @@ the two models, with LiteLLM's judge as the only feedback:
 
 ![ORACLE inside LiteLLM](litellm_poc.png)
 
+Until that lands, the adapter in this repository plugs ORACLE's own router into a LiteLLM `Router`
+as a custom routing strategy:
 
 ```python
 from oracle.integrations.litellm import OracleRoutingStrategy
